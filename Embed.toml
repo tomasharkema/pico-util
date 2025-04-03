@@ -18,16 +18,15 @@ enabled = true
 halt_afterwards = false
 
 [default.general]
-chip = "RP2040"
+chip = "RP235x"
 log_level = "WARN"
-# RP2040 does not support connect_under_reset
 connect_under_reset = false
 
 [default.rtt]
 enabled = true
 up_mode = "NoBlockSkip"
 channels = [
-    { up = 0, down = 0, name = "name", up_mode = "NoBlockSkip", format = "Defmt" },
+  { up = 0, down = 0, name = "name", up_mode = "NoBlockSkip", format = "Defmt" },
 ]
 timeout = 3000
 show_timestamps = true
@@ -35,5 +34,5 @@ log_enabled = false
 log_path = "./logs"
 
 [default.gdb]
-enabled = false
+enabled = true
 gdb_connection_string = "127.0.0.1:2345"

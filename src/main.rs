@@ -1,39 +1,52 @@
-//! Blinks the LED on a Pico board
-//!
-//! This will blink an LED attached to GP25, which is the pin the Pico uses for the on-board LED.
 #![no_std]
 #![no_main]
 
-use bsp::entry;
+// use panic_halt as _;
+use panic_probe as _;
+use rp235x_hal as hal;
+
 use defmt::*;
 use defmt_rtt as _;
+use embedded_graphics::{
+    mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
+    pixelcolor::BinaryColor,
+    prelude::*,
+    text::{Baseline, Text},
+};
 use embedded_hal::digital::OutputPin;
-use panic_probe as _;
+use hal::fugit::RateExtU32;
+use hal::gpio::{FunctionI2C, Pin};
+use hal::uart::{DataBits, StopBits, UartConfig, UartPeripheral};
+use hal::Clock;
+
+use sh1106::{prelude::*, Builder};
+
+/// Tell the Boot ROM about our application
+#[link_section = ".start_block"]
+#[used]
+pub static IMAGE_DEF: hal::block::ImageDef = hal::block::ImageDef::non_secure_exe();
+
+/// External high-speed crystal on the Raspberry Pi Pico 2 board is 12 MHz.
+/// Adjust if your board has a different frequency
+const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
 // Provide an alias for our BSP so we can switch targets quickly.
 // Uncomment the BSP you included in Cargo.toml, the rest of the code does not need to change.
-use rp_pico as bsp;
+// use rp_pico as bsp;
 // use sparkfun_pro_micro_rp2040 as bsp;
 
-use bsp::hal::{
-    clocks::{init_clocks_and_plls, Clock},
-    pac,
-    sio::Sio,
-    watchdog::Watchdog,
-};
-
-#[entry]
+#[hal::entry]
 fn main() -> ! {
     info!("Program start");
-    let mut pac = pac::Peripherals::take().unwrap();
-    let core = pac::CorePeripherals::take().unwrap();
-    let mut watchdog = Watchdog::new(pac.WATCHDOG);
-    let sio = Sio::new(pac.SIO);
 
-    // External high-speed crystal on the pico board is 12Mhz
-    let external_xtal_freq_hz = 12_000_000u32;
-    let clocks = init_clocks_and_plls(
-        external_xtal_freq_hz,
+    let mut pac = hal::pac::Peripherals::take().unwrap();
+
+    // Set up the watchdog driver - needed by the clock setup code
+    let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
+
+    // Configure the clocks
+    let clocks = hal::clocks::init_clocks_and_plls(
+        XTAL_FREQ_HZ,
         pac.XOSC,
         pac.CLOCKS,
         pac.PLL_SYS,
@@ -41,37 +54,84 @@ fn main() -> ! {
         &mut pac.RESETS,
         &mut watchdog,
     )
-    .ok()
     .unwrap();
 
-    let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
+    // The single-cycle I/O block controls our GPIO pins
+    let sio = hal::Sio::new(pac.SIO);
 
-    let pins = bsp::Pins::new(
+    // Set the pins to their default state
+    let pins = hal::gpio::Pins::new(
         pac.IO_BANK0,
         pac.PADS_BANK0,
         sio.gpio_bank0,
         &mut pac.RESETS,
     );
 
-    // This is the correct pin on the Raspberry Pico board. On other boards, even if they have an
-    // on-board LED, it might need to be changed.
-    //
-    // Notably, on the Pico W, the LED is not connected to any of the RP2040 GPIOs but to the cyw43 module instead.
-    // One way to do that is by using [embassy](https://github.com/embassy-rs/embassy/blob/main/examples/rp/src/bin/wifi_blinky.rs)
-    //
-    // If you have a Pico W and want to toggle a LED with a simple GPIO output pin, you can connect an external
-    // LED to one of the GPIO pins, and reference that pin here. Don't forget adding an appropriate resistor
-    // in series with the LED.
-    let mut led_pin = pins.led.into_push_pull_output();
+    // UART TX (characters sent from pico) on pin 1 (GPIO0) and RX (on pin 2 (GPIO1)
+    let uart_pins = (
+        pins.gpio4.into_function::<hal::gpio::FunctionUart>(),
+        pins.gpio5.into_function::<hal::gpio::FunctionUart>(),
+    );
+
+    // Create a UART driver
+    let mut uart = UartPeripheral::new(pac.UART1, uart_pins, &mut pac.RESETS)
+        .enable(
+            UartConfig::new(115200.Hz(), DataBits::Eight, None, StopBits::One),
+            clocks.peripheral_clock.freq(),
+        )
+        .unwrap();
+
+    // Write to the UART
+    uart.write_full_blocking(b"ADC example\r\n");
+
+    // Configure two pins as being I²C, not GPIO
+    let sda_pin: Pin<_, FunctionI2C, _> = pins.gpio16.reconfigure();
+    let scl_pin: Pin<_, FunctionI2C, _> = pins.gpio17.reconfigure();
+
+    let mut i2c = hal::I2C::i2c0(
+        pac.I2C0,
+        sda_pin,
+        scl_pin, // Try `not_an_scl_pin` here
+        400.kHz(),
+        &mut pac.RESETS,
+        &clocks.system_clock,
+    );
+
+    let mut display: GraphicsMode<_> = Builder::new().connect_i2c(i2c).into();
+
+    display.init().unwrap();
 
     loop {
-        info!("on!");
-        led_pin.set_high().unwrap();
-        delay.delay_ms(500);
-        info!("off!");
-        led_pin.set_low().unwrap();
-        delay.delay_ms(500);
+        hal::arch::wfi();
+
+        display.flush().unwrap();
+
+        let text_style = MonoTextStyleBuilder::new()
+            .font(&FONT_6X10)
+            .text_color(BinaryColor::On)
+            .build();
+
+        Text::with_baseline("Hello world!", Point::zero(), text_style, Baseline::Top)
+            .draw(&mut display)
+            .unwrap();
+
+        Text::with_baseline("Hello Rust!", Point::new(0, 16), text_style, Baseline::Top)
+            .draw(&mut display)
+            .unwrap();
+
+        display.flush().unwrap();
+
+        uart.write_full_blocking(b"ADC example\r\n");
+        info!("Program start");
     }
 }
 
-// End of file
+#[link_section = ".bi_entries"]
+#[used]
+pub static PICOTOOL_ENTRIES: [hal::binary_info::EntryAddr; 5] = [
+    hal::binary_info::rp_cargo_bin_name!(),
+    hal::binary_info::rp_cargo_version!(),
+    hal::binary_info::rp_program_description!(c"USB Serial Example"),
+    hal::binary_info::rp_cargo_homepage_url!(),
+    hal::binary_info::rp_program_build_attribute!(),
+];
