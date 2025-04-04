@@ -35,8 +35,6 @@ target = "thumbv8m.main-none-eabihf"
 #   secondary linker script. This is required to make defmt_rtt work.
 rustflags = [
   "-C",
-  "linker=flip-link",
-  "-C",
   "link-arg=--nmagic",
   "-C",
   "link-arg=-Tlink.x",
@@ -46,10 +44,12 @@ rustflags = [
   "target-cpu=cortex-m33",
 ]
 
+
 # Use picotool for loading.
 #
 # Load an elf, skipping unchanged flash sectors, verify it, and execute it
 runner = "probe-rs run --chip RP235x --protocol swd"
+# runner = "picotool load -u -v -x -t elf"
 
 # This is the soft-float ABI for Arm mode.
 #
@@ -60,14 +60,13 @@ runner = "probe-rs run --chip RP235x --protocol swd"
 # Pass some extra options to rustc. See above for descriptions.
 rustflags = [
   "-C",
-  "linker=flip-link",
-  "-C",
   "link-arg=--nmagic",
   "-C",
   "link-arg=-Tlink.x",
   "-C",
   "link-arg=-Tdefmt.x",
 ]
+
 
 # Use picotool for loading.
 #

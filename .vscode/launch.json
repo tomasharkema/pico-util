@@ -6,30 +6,38 @@
       "preLaunchTask": "rust: cargo build",
       "type": "probe-rs-debug",
       "request": "launch",
-      "name": "pico-util",
+      "name": "pico-util launch",
       "cwd": "${workspaceFolder}",
-      "chip": "rp2350",
-      // RP2040 doesn't support connectUnderReset
+      "chip": "RP235x",
       "connectUnderReset": false,
-      "speed": 4000,
+      "speed": 5000,
       "runtimeExecutable": "probe-rs",
       "runtimeArgs": [
         "dap-server"
       ],
       "flashingConfig": {
         "flashingEnabled": true,
-        "haltAfterReset": false
+        "haltAfterReset": false,
+        "formatOptions": {
+          //!MODIFY (or remove). Valid values are: 'bin', 'hex', 'elf'(default), 'idf'
+          "binaryFormat": "elf"
+        }
       },
       "coreConfigs": [
         {
           "coreIndex": 0,
           "programBinary": "target/thumbv8m.main-none-eabihf/debug/pico-util",
           "rttEnabled": true,
-          "svdFile": "${home}/Developer/pico-sdk/src/rp2350/hardware_regs/RP2350.svd",
+          // "svdFile": "/Users/tomas/Developer/pico-sdk/src/rp2350/hardware_regs/RP2350.svd",
         }
       ],
       "consoleLogLevel": "Debug", //Error, Warn, Info, Debug, Trace
-      "wireProtocol": "Swd"
+      "wireProtocol": "Swd",
+      "env": {
+        //!MODIFY (or remove)
+        // If you set this variable, check the VSCode console log window for the location of the log file.
+        "RUST_LOG": "info"
+      },
     }
   ]
 }

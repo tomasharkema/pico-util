@@ -1,10 +1,8 @@
 #![no_std]
 #![no_main]
 
+use cortex_m::delay;
 // use panic_halt as _;
-use panic_probe as _;
-use rp235x_hal as hal;
-
 use defmt::*;
 use defmt_rtt as _;
 use embedded_graphics::{
@@ -13,27 +11,61 @@ use embedded_graphics::{
     prelude::*,
     text::{Baseline, Text},
 };
-use embedded_hal::digital::OutputPin;
+use rp235x_hal::arch::delay;
+
 use hal::fugit::RateExtU32;
 use hal::gpio::{FunctionI2C, Pin};
 use hal::uart::{DataBits, StopBits, UartConfig, UartPeripheral};
 use hal::Clock;
+use heapless::String;
+use panic_probe as _;
+use rp235x_hal as hal;
+use sh1106::{interface::DisplayInterface, prelude::*, Builder};
+use ufmt::uwrite;
 
-use sh1106::{prelude::*, Builder};
+type PicoI2c = rp235x_hal::I2C<
+    rp235x_hal::pac::I2C0,
+    (
+        Pin<
+            rp235x_hal::gpio::bank0::Gpio16,
+            rp235x_hal::gpio::FunctionI2c,
+            rp235x_hal::gpio::PullUp,
+        >,
+        Pin<
+            rp235x_hal::gpio::bank0::Gpio17,
+            rp235x_hal::gpio::FunctionI2c,
+            rp235x_hal::gpio::PullUp,
+        >,
+    ),
+>;
 
-/// Tell the Boot ROM about our application
+type OledDisplay = GraphicsMode<I2cInterface<PicoI2c>>;
+
+type UartP = UartPeripheral<
+    rp235x_hal::uart::Enabled,
+    rp235x_hal::pac::UART1,
+    (
+        Pin<
+            rp235x_hal::gpio::bank0::Gpio4,
+            rp235x_hal::gpio::FunctionUart,
+            rp235x_hal::gpio::PullDown,
+        >,
+        Pin<
+            rp235x_hal::gpio::bank0::Gpio5,
+            rp235x_hal::gpio::FunctionUart,
+            rp235x_hal::gpio::PullDown,
+        >,
+    ),
+>;
+
+// Tell the Boot ROM about our application
 #[link_section = ".start_block"]
 #[used]
-pub static IMAGE_DEF: hal::block::ImageDef = hal::block::ImageDef::non_secure_exe();
+pub static IMAGE_DEF: hal::block::ImageDef = hal::block::ImageDef::secure_exe();
 
 /// External high-speed crystal on the Raspberry Pi Pico 2 board is 12 MHz.
 /// Adjust if your board has a different frequency
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
-
-// Provide an alias for our BSP so we can switch targets quickly.
-// Uncomment the BSP you included in Cargo.toml, the rest of the code does not need to change.
-// use rp_pico as bsp;
-// use sparkfun_pro_micro_rp2040 as bsp;
 
 #[hal::entry]
 fn main() -> ! {
@@ -74,7 +106,7 @@ fn main() -> ! {
     );
 
     // Create a UART driver
-    let mut uart = UartPeripheral::new(pac.UART1, uart_pins, &mut pac.RESETS)
+    let uart: UartP = UartPeripheral::new(pac.UART1, uart_pins, &mut pac.RESETS)
         .enable(
             UartConfig::new(115200.Hz(), DataBits::Eight, None, StopBits::One),
             clocks.peripheral_clock.freq(),
@@ -88,7 +120,7 @@ fn main() -> ! {
     let sda_pin: Pin<_, FunctionI2C, _> = pins.gpio16.reconfigure();
     let scl_pin: Pin<_, FunctionI2C, _> = pins.gpio17.reconfigure();
 
-    let mut i2c = hal::I2C::i2c0(
+    let i2c = hal::I2C::i2c0(
         pac.I2C0,
         sda_pin,
         scl_pin, // Try `not_an_scl_pin` here
@@ -97,33 +129,50 @@ fn main() -> ! {
         &clocks.system_clock,
     );
 
-    let mut display: GraphicsMode<_> = Builder::new().connect_i2c(i2c).into();
+    let mut display: OledDisplay = Builder::new().connect_i2c(i2c).into();
 
     display.init().unwrap();
 
-    loop {
-        hal::arch::wfi();
-
-        display.flush().unwrap();
-
-        let text_style = MonoTextStyleBuilder::new()
+    let text_style: embedded_graphics::mono_font::MonoTextStyle<'_, BinaryColor> =
+        MonoTextStyleBuilder::new()
             .font(&FONT_6X10)
             .text_color(BinaryColor::On)
             .build();
 
-        Text::with_baseline("Hello world!", Point::zero(), text_style, Baseline::Top)
-            .draw(&mut display)
-            .unwrap();
+    let mut i = 0;
 
-        Text::with_baseline("Hello Rust!", Point::new(0, 16), text_style, Baseline::Top)
-            .draw(&mut display)
-            .unwrap();
-
-        display.flush().unwrap();
-
-        uart.write_full_blocking(b"ADC example\r\n");
+    loop {
+        print_text(&mut display, &uart, text_style, i);
         info!("Program start");
+
+        delay(1000_000);
+
+        i += 1;
     }
+}
+
+fn print_text(
+    display: &mut OledDisplay,
+    uart: &UartP,
+    text_style: embedded_graphics::mono_font::MonoTextStyle<'_, BinaryColor>,
+    i: i32,
+) {
+    uart.write_full_blocking(b"ADC example\r\n");
+
+    display.clear();
+
+    Text::with_baseline("Hello world!", Point::zero(), text_style, Baseline::Top)
+        .draw(display)
+        .unwrap();
+
+    let mut s: String<64> = String::new();
+    uwrite!(s, "Hello Rust! {}", i).unwrap();
+
+    Text::with_baseline(s.as_str(), Point::new(0, 16), text_style, Baseline::Top)
+        .draw(display)
+        .unwrap();
+
+    display.flush().unwrap();
 }
 
 #[link_section = ".bi_entries"]

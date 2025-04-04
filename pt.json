@@ -1,0 +1,32 @@
+{
+  "version": [
+    1,
+    0
+  ],
+  "unpartitioned": {
+    "families": [
+      "absolute"
+    ],
+    "permissions": {
+      "secure": "rw",
+      "nonsecure": "rw",
+      "bootloader": "rw"
+    }
+  },
+  "partitions": [
+    {
+      "name": "pico-util",
+      "id": 0,
+      "size": "2044K",
+      "families": [
+        "rp2350-arm-s"
+      ],
+      "permissions": {
+        "secure": "rw",
+        "nonsecure": "rw",
+        "bootloader": "rw"
+      },
+      "ignored_during_riscv_boot": true
+    }
+  ]
+}
